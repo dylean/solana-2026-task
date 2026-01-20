@@ -105,7 +105,8 @@ pub struct Make<'info> {
     /**
      * system_program - 系统程序
      */
-    pub system_program: Program<'info, System>,
+    /// CHECK: System program account
+    pub system_program: AccountInfo<'info>,
 }
 
 /**
