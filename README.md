@@ -12,7 +12,7 @@
 |------|------|------|------|------|
 | Task1 | SPL Token 铸造 | TypeScript | ✅ 完成 | 使用 Web3.js 铸造 SPL 代币 |
 | Task2 | Anchor Vault | Anchor | ✅ 完成 | SOL 金库存取程序 |
-| Task3 | Anchor Escrow | Anchor | ✅ 完成 | 代币托管交换程序（245KB）|
+| Task3 | Anchor Escrow | Anchor | ✅ 完成 | 代币托管交换程序（208KB）|
 | Task4 | Pinocchio Vault | Pinocchio | ✅ 完成 | SOL 金库（底层实现，13KB）|
 | Task5 | Pinocchio Escrow | Pinocchio | ✅ 完成 | 代币托管（底层实现，14KB）|
 | Task6 | Pinocchio AMM | Pinocchio | ✅ 完成 | 自动做市商 AMM（17KB）|
@@ -421,7 +421,7 @@ MIT License
 
 **构建产物**:
 - Task2: `blueshift_anchor_vault.so` (Anchor)
-- Task3: `blueshift_anchor_escrow.so` (245KB, Anchor, 手动账户初始化)
+- Task3: `blueshift_anchor_escrow.so` (208KB, Anchor, 零验证模式)
 - Task4: `blueshift_vault.so` (13KB, Pinocchio)
 - Task5: `blueshift_escrow.so` (14KB, Pinocchio)
 - Task6: `blueshift_native_amm.so` (17KB, Pinocchio)
