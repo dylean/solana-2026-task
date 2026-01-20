@@ -12,7 +12,7 @@
 |------|------|------|------|------|
 | Task1 | SPL Token 铸造 | TypeScript | ✅ 完成 | 使用 Web3.js 铸造 SPL 代币 |
 | Task2 | Anchor Vault | Anchor | ✅ 完成 | SOL 金库存取程序 |
-| Task3 | Anchor Escrow | Anchor | ⚠️ 无法构建 | 代币托管交换程序（edition2024 问题）|
+| Task3 | Anchor Escrow | Anchor | ✅ 完成 | 代币托管交换程序（286KB）|
 | Task4 | Pinocchio Vault | Pinocchio | ✅ 完成 | SOL 金库（底层实现，13KB）|
 | Task5 | Pinocchio Escrow | Pinocchio | ✅ 完成 | 代币托管（底层实现，14KB）|
 | Task6 | Pinocchio AMM | Pinocchio | ✅ 完成 | 自动做市商 AMM（17KB）|
@@ -106,11 +106,14 @@ anchor build
 anchor test
 ```
 
-#### Task3 (Anchor Escrow) ⚠️
+#### Task3 (Anchor Escrow) ✅
 ```bash
 cd Task3/blueshift_anchor_escrow
-# 注意：由于 edition2024 问题，当前无法构建
-# 详见 BUILD_IMPOSSIBLE.md
+# 首先降级 blake3 以解决 edition2024 问题
+cargo update -p blake3 --precise 1.8.2
+# 然后构建
+cargo build-sbf
+# 输出：target/deploy/blueshift_anchor_escrow.so (286KB)
 ```
 
 #### Task4 (Pinocchio Vault) ✅
@@ -136,20 +139,26 @@ cargo build-sbf
 
 ## ⚠️ 已知问题
 
-### Task3 构建失败 (edition2024)
+### ~~Task3 构建失败 (edition2024)~~ ✅ 已解决！
 
 **问题描述**：
 Anchor 0.32.1 的依赖链中包含需要 `edition2024` 特性的 crate（`constant_time_eq 0.4.2`、`blake3 1.8.3`），但 Solana 工具链内置的 Cargo 版本（1.84.0）不支持此特性。
 
-**影响范围**：
-- Task3 (Anchor Escrow) 无法构建
+**✅ 解决方案（已实施）**：
+```bash
+# 降级 blake3 到 1.8.2（不需要 edition2024）
+cargo update -p blake3 --precise 1.8.2
+```
 
-**解决方案**：
-1. ✅ **已采用**：使用 Pinocchio 重写（Task5）
-2. ⏳ **等待**：Solana 官方更新工具链（预计 1-3 个月）
-3. 🔧 **高级**：自定义编译支持 edition2024 的 Solana 工具链
+这个命令会自动降级：
+- `blake3`: 1.8.3 → 1.8.2
+- `constant_time_eq`: 0.4.2 → 0.3.1
 
-详细说明请参阅：`Task3/BUILD_FINAL_STATUS.md`
+**结果**：
+- ✅ Task3 现在可以成功构建！
+- ✅ 生成 `blueshift_anchor_escrow.so` (286KB)
+
+详细说明请参阅：`Task3/EDITION2024_FIX.md`
 
 ## 📚 技术栈对比
 
@@ -259,24 +268,31 @@ createMintToInstruction(...)
 
 **程序 ID**: `11111111111111111111111111111111`
 
-### Task3: Anchor Escrow (⚠️ 无法构建)
+### Task3: Anchor Escrow
 
 **目标**：实现代币托管交换程序
 
 **核心功能**：
-- `make`: 创建托管
-- `take`: 接受托管
-- `refund`: 退款
+- `make`: 创建托管，Maker 存入代币 A，期望换取代币 B
+- `take`: Taker 接受托管，提供代币 B，换取代币 A
+- `refund`: Maker 取消托管，退回代币 A
 
 **核心概念**：
 - 多代币交换
-- 托管状态管理
+- PDA 控制的代币金库
+- Anchor CPI 调用
 - ATA 操作
-- 安全检查
+- 安全约束验证
+
+**技术特点**：
+- 使用 `anchor-spl` 进行 Token 操作
+- Anchor 约束自动验证账户
+- 通过降级 `blake3` 解决 edition2024 问题
+- 程序体积 286KB
 
 **程序 ID**: `22222222222222222222222222222222222222222222`
 
-**状态**: 由于 edition2024 问题无法构建，已用 Pinocchio 重写为 Task5
+**状态**: ✅ 已完成并成功构建（通过降级 blake3）
 
 ### Task4: Pinocchio Vault
 
@@ -400,11 +416,17 @@ MIT License
 **最后更新**: 2026-01-20
 
 **项目状态**: 
-- ✅ Task1, Task2, Task4, Task5, Task6 全部完成
-- ⚠️ Task3 因 edition2024 工具链问题暂时无法构建（已通过 Task5 替代实现）
+- ✅ **全部 6 个任务完成！**
+- ✅ Task3 edition2024 问题已通过降级 blake3 解决
 
 **构建产物**:
 - Task2: `blueshift_anchor_vault.so` (Anchor)
+- Task3: `blueshift_anchor_escrow.so` (286KB, Anchor)
 - Task4: `blueshift_vault.so` (13KB, Pinocchio)
 - Task5: `blueshift_escrow.so` (14KB, Pinocchio)
 - Task6: `blueshift_native_amm.so` (17KB, Pinocchio)
+
+**技术亮点**:
+- 成功解决 edition2024 依赖问题
+- 实现了 Anchor 和 Pinocchio 两种 Escrow 方案
+- 完成了高级 AMM (自动做市商) 程序
