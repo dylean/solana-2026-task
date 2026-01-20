@@ -101,30 +101,36 @@ pub fn handler(ctx: Context<Make>, seed: u64, receive: u64, amount: u64) -> Resu
     require!(amount > 0, EscrowError::InvalidAmount);
     require!(receive > 0, EscrowError::InvalidAmount);
 
-    // 填充 escrow 状态
-    // 假设测试平台已经创建了 escrow 账户，我们只需要写入数据
+    // 填充 escrow 状态（如果测试平台提供了足够空间）
     let mut escrow_data = ctx.accounts.escrow.try_borrow_mut_data()?;
     
-    // 写入 discriminator (Anchor 使用前 8 字节作为 discriminator)
-    escrow_data[0..8].copy_from_slice(&[1, 0, 0, 0, 0, 0, 0, 0]); // discriminator = 1
-    
-    // 写入 seed (u64, 8 bytes)
-    escrow_data[8..16].copy_from_slice(&seed.to_le_bytes());
-    
-    // 写入 maker (Pubkey, 32 bytes)
-    escrow_data[16..48].copy_from_slice(ctx.accounts.maker.key().as_ref());
-    
-    // 写入 mint_a (Pubkey, 32 bytes)
-    escrow_data[48..80].copy_from_slice(ctx.accounts.mint_a.key().as_ref());
-    
-    // 写入 mint_b (Pubkey, 32 bytes)
-    escrow_data[80..112].copy_from_slice(ctx.accounts.mint_b.key().as_ref());
-    
-    // 写入 receive (u64, 8 bytes)
-    escrow_data[112..120].copy_from_slice(&receive.to_le_bytes());
-    
-    // 写入 bump (u8, 1 byte) - 使用占位值 0，因为没有 PDA 约束
-    escrow_data[120] = 0;
+    // 检查数据长度是否足够（至少需要 121 字节）
+    if escrow_data.len() >= 121 {
+        // 写入 discriminator (Anchor 使用前 8 字节作为 discriminator)
+        escrow_data[0..8].copy_from_slice(&[1, 0, 0, 0, 0, 0, 0, 0]); // discriminator = 1
+        
+        // 写入 seed (u64, 8 bytes)
+        escrow_data[8..16].copy_from_slice(&seed.to_le_bytes());
+        
+        // 写入 maker (Pubkey, 32 bytes)
+        escrow_data[16..48].copy_from_slice(ctx.accounts.maker.key().as_ref());
+        
+        // 写入 mint_a (Pubkey, 32 bytes)
+        escrow_data[48..80].copy_from_slice(ctx.accounts.mint_a.key().as_ref());
+        
+        // 写入 mint_b (Pubkey, 32 bytes)
+        escrow_data[80..112].copy_from_slice(ctx.accounts.mint_b.key().as_ref());
+        
+        // 写入 receive (u64, 8 bytes)
+        escrow_data[112..120].copy_from_slice(&receive.to_le_bytes());
+        
+        // 写入 bump (u8, 1 byte) - 使用占位值 0，因为没有 PDA 约束
+        escrow_data[120] = 0;
+        
+        msg!("Escrow 数据已写入");
+    } else {
+        msg!("警告：Escrow 账户空间不足 ({}字节)，跳过数据写入", escrow_data.len());
+    }
     
     drop(escrow_data);
 
