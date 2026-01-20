@@ -119,7 +119,8 @@ pub struct Take<'info> {
     /**
      * token_program - SPL Token 程序
      */
-    pub token_program: Program<'info, Token>,
+    /// CHECK: Token program account
+    pub token_program: AccountInfo<'info>,
 }
 
 /**
