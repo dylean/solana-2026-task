@@ -1,0 +1,22 @@
+[package]
+name = "blueshift_anchor_escrow"
+version = "0.1.0"
+description = "Anchor 托管程序 - 安全的代币交换解决方案"
+edition = "2021"
+
+[lib]
+crate-type = ["cdylib", "lib"]
+name = "blueshift_anchor_escrow"
+
+[features]
+no-entrypoint = []
+no-idl = []
+no-log-ix-name = []
+cpi = ["no-entrypoint"]
+default = []
+idl-build = ["anchor-lang/idl-build"]
+
+[dependencies]
+anchor-lang = { version = "0.32.1", features = ["init-if-needed"] }
+# 使用原生 spl-token 而不是 anchor-spl 以避免 edition2024 问题
+spl-token = { version = "=3.5.0", features = ["no-entrypoint"] }

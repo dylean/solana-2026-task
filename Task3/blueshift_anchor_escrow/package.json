@@ -1,0 +1,37 @@
+{
+  "name": "blueshift_anchor_escrow",
+  "version": "0.1.0",
+  "description": "Anchor 托管程序 - 无需信任的代币交换",
+  "main": "index.js",
+  "scripts": {
+    "lint:fix": "prettier */*.js \"*/**/*{.js,.ts}\" -w",
+    "lint": "prettier */*.js \"*/**/*{.js,.ts}\" --check",
+    "test": "anchor test",
+    "build": "anchor build",
+    "deploy": "anchor deploy"
+  },
+  "keywords": [
+    "solana",
+    "anchor",
+    "escrow",
+    "swap",
+    "defi"
+  ],
+  "author": "Solana 2026 Task",
+  "license": "MIT",
+  "dependencies": {
+    "@coral-xyz/anchor": "0.29.0",
+    "@solana/spl-token": "^0.4.1",
+    "@solana/web3.js": "^1.87.6"
+  },
+  "devDependencies": {
+    "@types/bn.js": "^5.1.5",
+    "@types/chai": "^4.3.11",
+    "@types/mocha": "^10.0.6",
+    "chai": "^4.4.1",
+    "mocha": "^10.2.0",
+    "prettier": "^3.2.4",
+    "ts-mocha": "^10.0.0",
+    "typescript": "^5.3.3"
+  }
+}

@@ -1,0 +1,257 @@
+Pinocchio 金库
+
+金库允许用户安全地存储他们的资产。金库是去中心化金融（DeFi）的一个基本构建模块，其核心功能是允许用户安全地存储他们的资产（在本例中是 lamports），并且只有该用户本人可以在之后提取这些资产。
+
+在本次挑战中，我们将构建一个简单的 lamport 金库，展示如何使用基本账户、程序派生地址（PDA）和跨程序调用（CPI）。如果您不熟悉匹诺曹，建议先阅读匹诺曹简介，以熟悉我们将在本程序中使用的核心概念。
+
+安装
+在开始之前，请确保已安装 Rust 和匹诺曹。然后在终端中运行：
+
+# create workspace
+cargo new blueshift_vault --lib --edition 2021
+cd blueshift_vault
+添加匹诺曹：
+
+cargo add pinocchio pinocchio-system
+在 Cargo.toml 中声明 crate 类型，以在 target/deploy 中生成部署工件：
+
+toml
+[lib]
+crate-type = ["lib", "cdylib"]
+模板
+让我们从基本的程序结构开始。我们将把所有内容实现到 lib.rs 中，因为这是一个简单的程序。以下是包含核心组件的初始模板：
+
+rust
+#![no_std]
+use pinocchio::{account_info::AccountInfo, entrypoint, nostd_panic_handler, program_error::ProgramError, pubkey::Pubkey, ProgramResult};
+entrypoint!(process_instruction);
+nostd_panic_handler!();
+pub mod instructions;
+pub use instructions::*;
+// 22222222222222222222222222222222222222222222
+pub const ID: Pubkey = [
+    0x0f, 0x1e, 0x6b, 0x14, 0x21, 0xc0, 0x4a, 0x07,
+    0x04, 0x31, 0x26, 0x5c, 0x19, 0xc5, 0xbb, 0xee,
+    0x19, 0x92, 0xba, 0xe8, 0xaf, 0xd1, 0xcd, 0x07,
+    0x8e, 0xf8, 0xaf, 0x70, 0x47, 0xdc, 0x11, 0xf7,
+];
+fn process_instruction(
+    _program_id: &Pubkey,
+    accounts: &[AccountInfo],
+    instruction_data: &[u8],
+) -> ProgramResult {
+    match instruction_data.split_first() {
+        Some((Deposit::DISCRIMINATOR, data)) => Deposit::try_from((data, accounts))?.process(),
+        Some((Withdraw::DISCRIMINATOR, _)) => Withdraw::try_from(accounts)?.process(),
+        _ => Err(ProgramError::InvalidInstructionData),
+    }
+}
+存款
+存款指令执行以下步骤：
+
+验证金库为空（lamports 为零），以防止重复存款
+
+确保存款金额超过基本账户的免租金最低限额
+
+使用对系统程序的 CPI 将 lamports 从所有者转移到金库
+
+首先，让我们定义存款的账户结构：
+
+rust
+pub struct DepositAccounts<'a> {
+    pub owner: &'a AccountInfo,
+    pub vault: &'a AccountInfo,
+}
+impl<'a> TryFrom<&'a [AccountInfo]> for DepositAccounts<'a> {
+    type Error = ProgramError;
+    fn try_from(accounts: &'a [AccountInfo]) -> Result<Self, Self::Error> {
+        let [owner, vault, _] = accounts else {
+            return Err(ProgramError::NotEnoughAccountKeys);
+        };
+        // Accounts Checks
+        if !owner.is_signer() {
+            return Err(ProgramError::InvalidAccountOwner);
+        }
+        if !vault.is_owned_by(&pinocchio_system::ID) {
+            return Err(ProgramError::InvalidAccountOwner);
+        }
+        if vault.lamports().ne(&0) {
+            return Err(ProgramError::InvalidAccountData);
+        }
+        let (vault_key, _) = find_program_address(&[b"vault", owner.key()], &crate::ID);
+        if vault.key().ne(&vault_key) {
+            return Err(ProgramError::InvalidAccountOwner);
+        }
+        // Return the accounts
+        Ok(Self { owner, vault })
+    }
+}
+让我们逐步解析每个账户检查：
+
+owner：必须是签名者，因为他们需要授权交易
+
+vault：
+
+必须由系统程序拥有
+
+必须有零 lamports（确保是“新”存款）
+
+必须从正确的种子派生
+
+必须匹配预期的 PDA 地址
+
+现在让我们实现指令数据结构：
+
+rust
+pub struct DepositInstructionData {
+    pub amount: u64,
+}
+impl<'a> TryFrom<&'a [u8]> for DepositInstructionData {
+    type Error = ProgramError;
+    fn try_from(data: &'a [u8]) -> Result<Self, Self::Error> {
+        if data.len() != size_of::<u64>() {
+            return Err(ProgramError::InvalidInstructionData);
+        }
+        let amount = u64::from_le_bytes(data.try_into().unwrap());
+        // Instruction Checks
+        if amount.eq(&0) {
+            return Err(ProgramError::InvalidInstructionData);
+        }
+        Ok(Self { amount })
+    }
+}
+这里我们只需检查金额是否不为零。
+
+最后，让我们实现存款指令：
+
+rust
+pub struct Deposit<'a> {
+    pub accounts: DepositAccounts<'a>,
+    pub instruction_data: DepositInstructionData,
+}
+impl<'a> TryFrom<(&'a [u8], &'a [AccountInfo])> for Deposit<'a> {
+    type Error = ProgramError;
+    fn try_from((data, accounts): (&'a [u8], &'a [AccountInfo])) -> Result<Self, Self::Error> {
+        let accounts = DepositAccounts::try_from(accounts)?;
+        let instruction_data = DepositInstructionData::try_from(data)?;
+        Ok(Self {
+            accounts,
+            instruction_data,
+        })
+    }
+}
+impl<'a> Deposit<'a> {
+    pub const DISCRIMINATOR: &'a u8 = &0;
+    pub fn process(&mut self) -> ProgramResult {
+        Transfer {
+            from: self.accounts.owner,
+            to: self.accounts.vault,
+            lamports: self.instruction_data.amount,
+        }
+        .invoke()?;
+        Ok(())
+    }
+}
+Withdraw
+取款指令执行以下步骤：
+
+验证保险库中有 lamports（非空）
+
+使用保险库的 PDA 以其自身名义签署转账
+
+将保险库中的所有 lamports 转回给所有者
+
+首先，让我们定义取款的账户结构：
+
+rust
+pub struct WithdrawAccounts<'a> {
+    pub owner: &'a AccountInfo,
+    pub vault: &'a AccountInfo,
+    pub bumps: [u8; 1],
+}
+impl<'a> TryFrom<&'a [AccountInfo]> for WithdrawAccounts<'a> {
+    type Error = ProgramError;
+    fn try_from(accounts: &'a [AccountInfo]) -> Result<Self, Self::Error> {
+        let [owner, vault, _] = accounts else {
+            return Err(ProgramError::NotEnoughAccountKeys);
+        };
+        // Basic Accounts Checks
+        if !owner.is_signer() {
+            return Err(ProgramError::InvalidAccountOwner);
+        }
+        if !vault.is_owned_by(&pinocchio_system::ID) {
+            return Err(ProgramError::InvalidAccountOwner);
+        }
+        if vault.lamports().eq(&0) {
+            return Err(ProgramError::InvalidAccountData);
+        }
+        let (vault_key, bump) = find_program_address(&[b"vault", owner.key()], &crate::ID);
+        if &vault_key != vault.key() {
+            return Err(ProgramError::InvalidAccountOwner);
+        }
+        Ok(Self { owner, vault, bumps: [bump] })
+    }
+}
+让我们逐步解析每个账户检查：
+
+owner：必须是签名者，因为他们需要授权交易
+
+vault：
+
+必须由系统程序拥有
+
+必须从正确的种子派生
+
+必须匹配预期的 PDA 地址
+
+bumps：我们存储了用于 PDA 签名的 bump seed
+
+现在让我们实现取款指令：
+
+rust
+pub struct Withdraw<'a> {
+    pub accounts: WithdrawAccounts<'a>,
+}
+impl<'a> TryFrom<&'a [AccountInfo]> for Withdraw<'a> {
+    type Error = ProgramError;
+    fn try_from(accounts: &'a [AccountInfo]) -> Result<Self, Self::Error> {
+        let accounts = WithdrawAccounts::try_from(accounts)?;
+        Ok(Self { accounts })
+    }
+}
+impl<'a> Withdraw<'a> {
+    pub const DISCRIMINATOR: &'a u8 = &1;
+    pub fn process(&mut self) -> ProgramResult {
+        // Create PDA signer seeds
+        let seeds = [
+            Seed::from(b"vault"),
+            Seed::from(self.accounts.owner.key().as_ref()),
+            Seed::from(&self.accounts.bumps),
+        ];
+        let signers = [Signer::from(&seeds)];
+        // Transfer all lamports from vault to owner
+        Transfer {
+            from: self.accounts.vault,
+            to: self.accounts.owner,
+            lamports: self.accounts.vault.lamports(),
+        }
+        .invoke_signed(&signers)?;
+        Ok(())
+    }
+}
+此取款的安全性由以下两个因素保证：
+
+保险库的 PDA 是使用所有者的公钥派生的，确保只有原始存款人可以取款
+
+我们提供给 invoke_signed 的种子验证了 PDA 签署转账的能力
+
+Conclusion
+现在您可以根据我们的单元测试测试您的程序并领取您的 NFT！
+
+首先，在终端中使用以下命令构建您的程序：
+
+cargo build-sbf
+这会在您的 target/deploy 文件夹中直接生成一个 .so 文件。
+
+现在点击 take challenge 按钮并将文件拖放到那里！
+

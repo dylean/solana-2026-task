@@ -1,0 +1,31 @@
+[toolchain]
+# 使用 Anchor CLI 的版本
+anchor_version = "0.32.1"
+
+[features]
+# 启用解析种子
+seeds = true
+# 跳过 lint
+skip-lint = false
+
+[programs.localnet]
+blueshift_anchor_vault = "22222222222222222222222222222222222222222222"
+
+[programs.devnet]
+blueshift_anchor_vault = "22222222222222222222222222222222222222222222"
+
+[programs.testnet]
+blueshift_anchor_vault = "22222222222222222222222222222222222222222222"
+
+[registry]
+url = "https://api.apr.dev"
+
+[provider]
+# 本地集群配置
+cluster = "Localnet"
+# 钱包路径（使用系统默认钱包）
+wallet = "~/.config/solana/id.json"
+
+[scripts]
+# 测试脚本
+test = "yarn run ts-mocha -p ./tsconfig.json -t 1000000 tests/**/*.ts"
