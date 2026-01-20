@@ -25,9 +25,9 @@ solana-2026-task/
 ├── DOCKER.md                         # Docker 使用说明
 ├── .gitignore                        # Git 忽略配置
 │
-├── Task1.md                          # Task1 需求文档
-├── Task1/                            # Task1 代码（TypeScript）
-│   └── mint-spl-token.ts
+├── Task1/                            # Task1 项目（TypeScript）
+│   ├── Task1.md                      # 需求文档
+│   └── mint-spl-token.ts             # SPL Token 铸造代码
 │
 ├── Task2/                            # Task2 Anchor Vault 项目
 │   ├── Task2.md                      # 需求文档
