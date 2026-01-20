@@ -77,7 +77,7 @@ pub struct Escrow {
     pub bump: u8,
 }
 
-/**
+/*
  * 为什么只存储这些字段？
  * 
  * 设计原则：

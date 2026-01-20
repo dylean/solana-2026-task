@@ -18,5 +18,4 @@ idl-build = ["anchor-lang/idl-build"]
 
 [dependencies]
 anchor-lang = { version = "0.32.1", features = ["init-if-needed"] }
-# 使用原生 spl-token 而不是 anchor-spl 以避免 edition2024 问题
-spl-token = { version = "=3.5.0", features = ["no-entrypoint"] }
+anchor-spl = { version = "0.32.1", features = ["token"] }

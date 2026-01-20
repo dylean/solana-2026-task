@@ -3,20 +3,17 @@
  * 
  * 功能：
  * 1. 初始化托管记录并存储所有条款
- * 2. 创建金库（escrow 拥有的 mint_a 的 ATA）
+ * 2. 创建金库（escrow 拥有的 mint_a 的 Token Account）
  * 3. 使用 CPI 调用 SPL-Token 程序，将创建者的代币 A 转移到金库
  * 
  * Discriminator: 0
  */
 
 use anchor_lang::prelude::*;
-use anchor_lang::system_program::{transfer, Transfer as SystemTransfer};
+use anchor_spl::token::{self, Token, TokenAccount, Mint, Transfer};
 
 use crate::errors::EscrowError;
 use crate::state::Escrow;
-
-// SPL Token 程序 ID
-declare_id!("TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA");
 
 /**
  * Make 账户上下文
@@ -56,26 +53,28 @@ pub struct Make<'info> {
     pub escrow: Account<'info, Escrow>,
 
     /**
-     * mint_a - 代币 A 的铸币账户（只需验证，不需要修改）
+     * mint_a - 代币 A 的铸币账户
      */
-    /// CHECK: 代币 mint 账户，通过 CPI 验证
-    pub mint_a: AccountInfo<'info>,
+    pub mint_a: Account<'info, Mint>,
 
     /**
-     * mint_b - 代币 B 的铸币账户（只需验证，不需要修改）
+     * mint_b - 代币 B 的铸币账户
      */
-    /// CHECK: 代币 mint 账户，通过 CPI 验证
-    pub mint_b: AccountInfo<'info>,
+    pub mint_b: Account<'info, Mint>,
 
     /**
      * maker_ata_a - 创建者的代币 A 账户
      * 
      * 约束：
      * - mut：需要转出代币
+     * - constraint: 验证是正确的 mint
      */
-    #[account(mut)]
-    /// CHECK: 代币账户，通过 CPI 验证
-    pub maker_ata_a: AccountInfo<'info>,
+    #[account(
+        mut,
+        constraint = maker_ata_a.mint == mint_a.key() @ EscrowError::InvalidMint,
+        constraint = maker_ata_a.owner == maker.key() @ EscrowError::InvalidOwner,
+    )]
+    pub maker_ata_a: Account<'info, TokenAccount>,
 
     /**
      * vault - 金库代币账户（托管程序控制）
@@ -84,22 +83,23 @@ pub struct Make<'info> {
      * - init：初始化金库
      * - payer = maker：由创建者支付
      * - seeds：PDA 派生
+     * - mint：指定代币类型
+     * - authority：由 escrow PDA 控制
      */
     #[account(
         init,
         payer = maker,
         seeds = [b"vault", escrow.key().as_ref()],
         bump,
-        space = 165, // Token Account 固定大小
+        token::mint = mint_a,
+        token::authority = escrow,
     )]
-    /// CHECK: 金库账户，由程序控制
-    pub vault: AccountInfo<'info>,
+    pub vault: Account<'info, TokenAccount>,
 
     /**
      * token_program - SPL Token 程序
      */
-    /// CHECK: SPL Token 程序
-    pub token_program: AccountInfo<'info>,
+    pub token_program: Program<'info, Token>,
 
     /**
      * system_program - 系统程序
@@ -112,7 +112,7 @@ pub struct Make<'info> {
  * 
  * 步骤：
  * 1. 填充 escrow 状态
- * 2. 初始化 vault 为 Token Account
+ * 2. vault 已通过 init 约束自动初始化
  * 3. 从 maker_ata_a 转移代币到 vault
  */
 pub fn handler(ctx: Context<Make>, seed: u64, receive: u64, amount: u64) -> Result<()> {
@@ -129,44 +129,18 @@ pub fn handler(ctx: Context<Make>, seed: u64, receive: u64, amount: u64) -> Resu
     escrow.receive = receive;
     escrow.bump = ctx.bumps.escrow;
 
-    // 初始化 vault 为 Token Account
-    // 使用 CPI 调用 spl_token::initialize_account
-    let cpi_accounts = spl_token::instruction::initialize_account(
-        ctx.accounts.token_program.key,
-        ctx.accounts.vault.key,
-        ctx.accounts.mint_a.key,
-        &ctx.accounts.escrow.key(),
-    )?;
-    
-    anchor_lang::solana_program::program::invoke(
-        &cpi_accounts,
-        &[
-            ctx.accounts.vault.to_account_info(),
-            ctx.accounts.mint_a.to_account_info(),
-            ctx.accounts.escrow.to_account_info(),
-            ctx.accounts.token_program.to_account_info(),
-        ],
-    )?;
-
     // 转移代币从 maker 到 vault
-    let transfer_ix = spl_token::instruction::transfer(
-        ctx.accounts.token_program.key,
-        ctx.accounts.maker_ata_a.key,
-        ctx.accounts.vault.key,
-        ctx.accounts.maker.key,
-        &[],
-        amount,
-    )?;
-
-    anchor_lang::solana_program::program::invoke(
-        &transfer_ix,
-        &[
-            ctx.accounts.maker_ata_a.to_account_info(),
-            ctx.accounts.vault.to_account_info(),
-            ctx.accounts.maker.to_account_info(),
-            ctx.accounts.token_program.to_account_info(),
-        ],
-    )?;
+    // 使用 Anchor CPI 帮助函数
+    let cpi_accounts = Transfer {
+        from: ctx.accounts.maker_ata_a.to_account_info(),
+        to: ctx.accounts.vault.to_account_info(),
+        authority: ctx.accounts.maker.to_account_info(),
+    };
+    let cpi_ctx = CpiContext::new(
+        ctx.accounts.token_program.to_account_info(),
+        cpi_accounts,
+    );
+    token::transfer(cpi_ctx, amount)?;
 
     msg!("托管创建成功！Seed: {}, Amount: {}, Receive: {}", seed, amount, receive);
     

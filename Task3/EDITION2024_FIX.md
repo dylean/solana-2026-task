@@ -39,23 +39,53 @@ The package requires the Cargo feature called `edition2024`,
 but that feature is not stabilized in this version of Cargo (1.84.0)
 ```
 
-### 现在（edition2024 问题已解决）
+### 现在（✅ 构建成功！）
+```bash
+cargo build-sbf --manifest-path=programs/blueshift_anchor_escrow/Cargo.toml
+# Finished `release` profile [optimized] target(s) in 0.49s
+# 生成：target/deploy/blueshift_anchor_escrow.so (286KB)
 ```
-✅ 不再有 edition2024 相关错误
-⚠️  仍有一些代码实现错误（类型不匹配等）
+
+**构建状态**：✅ 完全成功！
+
+## 🔧 完整修复步骤
+
+### 1. 降级 blake3
+```bash
+cargo update -p blake3 --precise 1.8.2
+# 自动降级 constant_time_eq 到 0.3.1
 ```
 
-**注意**：当前构建仍然失败，但原因是代码实现问题，不是依赖版本问题。
+### 2. 使用 anchor-spl 替代原生 spl-token
+修改 `Cargo.toml`：
+```toml
+[dependencies]
+anchor-lang = { version = "0.32.1", features = ["init-if-needed"] }
+anchor-spl = { version = "0.32.1", features = ["token"] }  # ✅ 使用 Anchor SPL
+```
 
-## 🔧 当前剩余问题
+### 3. 重写所有指令使用 Anchor CPI
+- ✅ **make.rs**：使用 `token::transfer()` 和 Anchor 约束
+- ✅ **take.rs**：使用 `token::transfer()` 和 `token::close_account()`
+- ✅ **refund.rs**：使用 `token::transfer()` 和 `token::close_account()`
 
-构建过程中的错误主要是：
+### 4. 修复生命周期问题
+为 `to_le_bytes()` 创建绑定：
+```rust
+let seed_bytes = ctx.accounts.escrow.seed.to_le_bytes();
+let escrow_seeds = &[
+    b"escrow",
+    ctx.accounts.maker.key.as_ref(),
+    seed_bytes.as_ref(),  // ✅ 使用绑定而不是临时值
+    &[ctx.accounts.escrow.bump],
+];
+```
 
-1. **类型不匹配**：`spl_token::solana_program::program_error::ProgramError` vs `anchor_lang::error::Error`
-2. **未实现的功能**：一些指令处理函数还没有完全实现
-3. **导入问题**：一些模块导入需要调整
-
-**这些都是可以修复的代码问题，不是依赖版本问题！**
+### 5. 构建成功
+```bash
+cargo build-sbf --manifest-path=programs/blueshift_anchor_escrow/Cargo.toml
+# ✅ 生成 blueshift_anchor_escrow.so (286KB)
+```
 
 ## 💡 为什么有效？
 

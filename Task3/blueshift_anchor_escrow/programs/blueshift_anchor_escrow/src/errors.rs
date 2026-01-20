@@ -67,9 +67,33 @@ pub enum EscrowError {
      */
     #[msg("无效的代币 B 铸币地址")]
     InvalidMintB,
+
+    /**
+     * InvalidMint - 无效的代币 Mint
+     * 
+     * 触发场景：
+     * - Token 账户的 mint 与期望的不匹配
+     * 
+     * 使用位置：
+     * - 所有指令：验证 Token 账户的 mint
+     */
+    #[msg("无效的代币 Mint")]
+    InvalidMint,
+
+    /**
+     * InvalidOwner - 无效的账户所有者
+     * 
+     * 触发场景：
+     * - Token 账户的 owner 与期望的不匹配
+     * 
+     * 使用位置：
+     * - 所有指令：验证 Token 账户的所有者
+     */
+    #[msg("无效的账户所有者")]
+    InvalidOwner,
 }
 
-/**
+/*
  * 错误处理最佳实践：
  * 
  * 1. 清晰的错误消息
