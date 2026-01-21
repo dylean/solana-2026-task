@@ -14,7 +14,7 @@
 | Task2 | Anchor Vault | Anchor | ✅ 完成 | SOL 金库存取程序 |
 | Task3 | Anchor Escrow | Anchor | ✅ 完成 | 代币托管交换程序（307KB）|
 | Task4 | Pinocchio Vault | Pinocchio | ✅ 完成 | SOL 金库（底层实现，13KB）|
-| Task5 | Pinocchio Escrow | Pinocchio | ✅ 完成 | 代币托管（底层实现，22KB）|
+| Task5 | Pinocchio Escrow | Pinocchio | ✅ 完成 | 代币托管（底层实现，23KB）|
 | Task6 | Pinocchio AMM | Pinocchio | ✅ 完成 | 自动做市商 AMM（17KB）|
 
 ## 📁 项目结构
@@ -53,7 +53,7 @@ solana-2026-task/
 │   ├── Task5.md                      # 需求文档
 │   └── blueshift_escrow/             # Pinocchio 项目
 │       ├── src/                      # 源代码
-│       ├── target/deploy/            # 编译产物 (.so, 14KB)
+│       ├── target/deploy/            # 编译产物 (.so, 23KB)
 │       ├── README.md                 # 项目文档
 │       └── IMPLEMENTATION_GUIDE.md   # 实现指南
 │
