@@ -1,3 +1,14 @@
+/**
+ * take.rs - 接受托管指令
+ * 
+ * 功能：
+ * 1. 关闭托管记录，将其租金 lamports 返还给创建者
+ * 2. 将 Token A 从保管库转移到接受者，然后关闭保管库
+ * 3. 将约定数量的 Token B 从接受者转移到创建者
+ * 
+ * Discriminator: 1
+ */
+
 use pinocchio::{
     cpi::{Seed, Signer},
     error::ProgramError,
@@ -7,114 +18,171 @@ use pinocchio::{
 };
 use pinocchio_token::instructions::{Transfer, CloseAccount};
 use crate::{ID, state::Escrow};
+use super::helpers::{
+    SignerAccount, MintInterface, AssociatedTokenAccount, ProgramAccount, TokenAccount,
+};
 
-/// Take 指令 - 接受托管
-/// 
-/// 账户顺序：
-/// 0. taker (signer, writable) - 接受者
-/// 1. maker (writable) - 创建者
-/// 2. escrow (writable) - Escrow 账户
-/// 3. mint_a - 代币 A 的 Mint
-/// 4. mint_b - 代币 B 的 Mint
-/// 5. vault (writable) - 金库代币账户
-/// 6. taker_ata_a (writable) - 接受者的代币 A 账户
-/// 7. taker_ata_b (writable) - 接受者的代币 B 账户
-/// 8. maker_ata_b (writable) - 创建者的代币 B 账户
-/// 9. system_program - 系统程序
-/// 10. token_program - Token 程序
-pub fn take(accounts: &[AccountView]) -> ProgramResult {
-    // 验证账户数量
-    if accounts.len() < 11 {
-        return Err(ProgramError::NotEnoughAccountKeys);
+/// Take 账户结构
+pub struct TakeAccounts<'a> {
+    pub taker: &'a AccountView,
+    pub maker: &'a AccountView,
+    pub escrow: &'a AccountView,
+    pub mint_a: &'a AccountView,
+    pub mint_b: &'a AccountView,
+    pub vault: &'a AccountView,
+    pub taker_ata_a: &'a AccountView,
+    pub taker_ata_b: &'a AccountView,
+    pub maker_ata_b: &'a AccountView,
+    pub system_program: &'a AccountView,
+    pub token_program: &'a AccountView,
+}
+
+impl<'a> TakeAccounts<'a> {
+    /// 从账户数组解析
+    pub fn try_from_accounts(accounts: &'a [AccountView]) -> Result<Self, ProgramError> {
+        if accounts.len() < 11 {
+            return Err(ProgramError::NotEnoughAccountKeys);
+        }
+
+        let taker = &accounts[0];
+        let maker = &accounts[1];
+        let escrow = &accounts[2];
+        let mint_a = &accounts[3];
+        let mint_b = &accounts[4];
+        let vault = &accounts[5];
+        let taker_ata_a = &accounts[6];
+        let taker_ata_b = &accounts[7];
+        let maker_ata_b = &accounts[8];
+        let system_program = &accounts[9];
+        let token_program = &accounts[10];
+
+        // 基本账户检查
+        SignerAccount::check(taker)?;
+        ProgramAccount::check(escrow)?;
+        MintInterface::check(mint_a)?;
+        MintInterface::check(mint_b)?;
+        AssociatedTokenAccount::check(taker_ata_b, taker, mint_b, token_program)?;
+        AssociatedTokenAccount::check(vault, escrow, mint_a, token_program)?;
+
+        Ok(Self {
+            taker,
+            maker,
+            escrow,
+            mint_a,
+            mint_b,
+            vault,
+            taker_ata_a,
+            taker_ata_b,
+            maker_ata_b,
+            system_program,
+            token_program,
+        })
+    }
+}
+
+/// Take 指令结构
+pub struct Take<'a> {
+    pub accounts: TakeAccounts<'a>,
+}
+
+impl<'a> Take<'a> {
+    /// 从账户创建 Take 指令
+    pub fn try_from_accounts(accounts: &'a [AccountView]) -> Result<Self, ProgramError> {
+        let accounts = TakeAccounts::try_from_accounts(accounts)?;
+
+        // 初始化必要的 ATA（如果不存在）
+        AssociatedTokenAccount::init_if_needed(
+            accounts.taker_ata_a,
+            accounts.mint_a,
+            accounts.taker,
+            accounts.taker,
+            accounts.system_program,
+            accounts.token_program,
+        )?;
+
+        AssociatedTokenAccount::init_if_needed(
+            accounts.maker_ata_b,
+            accounts.mint_b,
+            accounts.taker,
+            accounts.maker,
+            accounts.system_program,
+            accounts.token_program,
+        )?;
+
+        Ok(Self { accounts })
     }
 
-    // 解析账户
-    let taker = &accounts[0];
-    let maker = &accounts[1];
-    let escrow = &accounts[2];
-    let _mint_a = &accounts[3];
-    let _mint_b = &accounts[4];
-    let vault = &accounts[5];
-    let taker_ata_a = &accounts[6];
-    let taker_ata_b = &accounts[7];
-    let maker_ata_b = &accounts[8];
-    let _system_program = &accounts[9];
-    let _token_program = &accounts[10];
+    /// 处理指令
+    pub fn process(&mut self) -> ProgramResult {
+        // 读取 escrow 状态
+        let data = self.accounts.escrow.try_borrow()?;
+        let escrow = Escrow::load(&data)?;
 
-    // 验证 taker 是签名者
-    if !taker.is_signer() {
-        return Err(ProgramError::MissingRequiredSignature);
-    }
+        // 验证 escrow PDA
+        let escrow_key = Address::create_program_address(
+            &[
+                b"escrow",
+                self.accounts.maker.address().as_ref(),
+                &escrow.seed.to_le_bytes(),
+                &escrow.bump,
+            ],
+            &ID,
+        )?;
 
-    // 读取 escrow 状态
-    let escrow_data = unsafe { escrow.borrow_unchecked() };
-    let escrow_state = Escrow::load(&escrow_data)?;
+        if &escrow_key != self.accounts.escrow.address() {
+            return Err(ProgramError::InvalidAccountOwner);
+        }
 
-    // 验证 maker 匹配
-    if maker.address() != &escrow_state.maker {
-        return Err(ProgramError::InvalidAccountData);
-    }
+        // 创建 PDA 签名种子
+        let seed_binding = escrow.seed.to_le_bytes();
+        let bump_binding = escrow.bump;
+        let escrow_seeds = [
+            Seed::from(b"escrow"),
+            Seed::from(self.accounts.maker.address().as_ref()),
+            Seed::from(&seed_binding),
+            Seed::from(&bump_binding),
+        ];
+        let signer = Signer::from(&escrow_seeds);
 
-    // 验证 escrow PDA
-    let seed_bytes = escrow_state.seed.to_le_bytes();
-    let (expected_escrow, _bump) = Address::find_program_address(
-        &[b"escrow", maker.address().as_ref(), &seed_bytes],
-        &ID,
-    );
+        // 获取 vault 余额
+        let amount = TokenAccount::from_account_info(self.accounts.vault)?.amount()?;
 
-    if escrow.address() != &expected_escrow {
-        return Err(ProgramError::InvalidAccountData);
-    }
+        // 保存 receive 值，然后释放 data
+        let receive_amount = escrow.receive;
+        drop(data);
 
-    let bump = escrow_state.bump[0];
-
-    // 创建 PDA 签名种子
-    let bump_binding = [bump];
-    let seeds = [
-        Seed::from(b"escrow"),
-        Seed::from(maker.address().as_ref()),
-        Seed::from(&seed_bytes),
-        Seed::from(&bump_binding),
-    ];
-    let signers = [Signer::from(&seeds)];
-
-    // 1. 转移代币 B 从 taker 到 maker
-    Transfer {
-        from: taker_ata_b,
-        to: maker_ata_b,
-        authority: taker,
-        amount: escrow_state.receive,
-    }.invoke()?;
-
-    // 2. 使用 PDA 签名转移代币 A 从 vault 到 taker
-    // 获取 vault 中的全部余额
-    let vault_data = unsafe { vault.borrow_unchecked() };
-    let vault_amount = if vault_data.len() >= 72 {
-        // SPL Token 账户中 amount 字段在偏移 64 处
-        u64::from_le_bytes(vault_data[64..72].try_into().unwrap())
-    } else {
-        0
-    };
-    drop(vault_data);
-
-    if vault_amount > 0 {
+        // 1. 从 Vault 转移到 Taker (使用 PDA 签名)
         Transfer {
-            from: vault,
-            to: taker_ata_a,
-            authority: escrow,
-            amount: vault_amount,
-        }.invoke_signed(&signers)?;
+            from: self.accounts.vault,
+            to: self.accounts.taker_ata_a,
+            authority: self.accounts.escrow,
+            amount,
+        }.invoke_signed(&[signer.clone()])?;
+
+        // 2. 关闭 Vault (使用 PDA 签名)
+        CloseAccount {
+            account: self.accounts.vault,
+            destination: self.accounts.maker,
+            authority: self.accounts.escrow,
+        }.invoke_signed(&[signer.clone()])?;
+
+        // 3. 从 Taker 转移到 Maker
+        Transfer {
+            from: self.accounts.taker_ata_b,
+            to: self.accounts.maker_ata_b,
+            authority: self.accounts.taker,
+            amount: receive_amount,
+        }.invoke()?;
+
+        // 4. 关闭 Escrow (将租金返还给 maker，不是 taker！)
+        ProgramAccount::close(self.accounts.escrow, self.accounts.maker)?;
+
+        Ok(())
     }
+}
 
-    // 3. 关闭 vault 账户
-    CloseAccount {
-        account: vault,
-        destination: maker,
-        authority: escrow,
-    }.invoke_signed(&signers)?;
-
-    // 注意：escrow 账户关闭需要在客户端处理或使用其他机制
-    // 这里我们简化处理，只关闭 token 账户
-
-    Ok(())
+/// take 指令入口点
+pub fn take(accounts: &[AccountView]) -> ProgramResult {
+    let mut take_ix = Take::try_from_accounts(accounts)?;
+    take_ix.process()
 }

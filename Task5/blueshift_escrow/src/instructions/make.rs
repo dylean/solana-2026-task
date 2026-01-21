@@ -1,14 +1,25 @@
+/**
+ * make.rs - 创建托管指令
+ * 
+ * 功能：
+ * 1. 初始化托管记录并存储所有交易条款
+ * 2. 创建金库（escrow 拥有的 mint_a 的 ATA）
+ * 3. 使用 CPI 调用 SPL-Token 程序，将创建者的 Token A 转移到金库
+ * 
+ * Discriminator: 0
+ */
+
 use pinocchio::{
-    cpi::{Seed, Signer},
+    cpi::Seed,
     error::ProgramError,
-    Address,
     AccountView,
     ProgramResult,
+    Address,
 };
-use pinocchio_system::instructions::CreateAccount;
 use pinocchio_token::instructions::Transfer;
 use core::mem::size_of;
 use crate::{ID, state::Escrow};
+use super::helpers::{SignerAccount, MintInterface, AssociatedTokenAccount, ProgramAccount};
 
 /// Make 指令数据
 pub struct MakeInstructionData {
@@ -29,7 +40,7 @@ impl MakeInstructionData {
         let amount = u64::from_le_bytes(data[16..24].try_into().unwrap());
 
         // 验证数据
-        if amount == 0 || receive == 0 {
+        if amount == 0 {
             return Err(ProgramError::InvalidInstructionData);
         }
 
@@ -41,109 +52,140 @@ impl MakeInstructionData {
     }
 }
 
-/// Make 指令 - 创建托管
-/// 
-/// 账户顺序：
-/// 0. maker (signer, writable) - 创建者
-/// 1. escrow (writable) - Escrow 账户
-/// 2. mint_a - 代币 A 的 Mint
-/// 3. mint_b - 代币 B 的 Mint
-/// 4. maker_ata_a (writable) - 创建者的代币 A 账户
-/// 5. vault (writable) - 金库代币账户
-/// 6. system_program - 系统程序
-/// 7. token_program - Token 程序
-/// 8. associated_token_program - ATA 程序
-pub fn make(data: &[u8], accounts: &[AccountView]) -> ProgramResult {
-    // 验证账户数量
-    if accounts.len() < 9 {
-        return Err(ProgramError::NotEnoughAccountKeys);
-    }
+/// Make 账户结构
+pub struct MakeAccounts<'a> {
+    pub maker: &'a AccountView,
+    pub escrow: &'a AccountView,
+    pub mint_a: &'a AccountView,
+    pub mint_b: &'a AccountView,
+    pub maker_ata_a: &'a AccountView,
+    pub vault: &'a AccountView,
+    pub system_program: &'a AccountView,
+    pub token_program: &'a AccountView,
+}
 
-    // 解析账户
-    let maker = &accounts[0];
-    let escrow = &accounts[1];
-    let mint_a = &accounts[2];
-    let mint_b = &accounts[3];
-    let maker_ata_a = &accounts[4];
-    let vault = &accounts[5];
-    let _system_program = &accounts[6];
-    let _token_program = &accounts[7];
-    let _ata_program = &accounts[8];
-
-    // 验证 maker 是签名者
-    if !maker.is_signer() {
-        return Err(ProgramError::MissingRequiredSignature);
-    }
-
-    // 解析指令数据
-    let instruction_data = MakeInstructionData::try_from_bytes(data)?;
-
-    // 验证 mint 不同
-    if mint_a.address() == mint_b.address() {
-        return Err(ProgramError::InvalidAccountData);
-    }
-
-    // 验证 escrow PDA
-    let seed_bytes = instruction_data.seed.to_le_bytes();
-    let (expected_escrow, bump) = Address::find_program_address(
-        &[b"escrow", maker.address().as_ref(), &seed_bytes],
-        &ID,
-    );
-
-    if escrow.address() != &expected_escrow {
-        return Err(ProgramError::InvalidAccountData);
-    }
-
-    // 创建 PDA 签名种子
-    let bump_binding = [bump];
-    let seeds = [
-        Seed::from(b"escrow"),
-        Seed::from(maker.address().as_ref()),
-        Seed::from(&seed_bytes),
-        Seed::from(&bump_binding),
-    ];
-    let signers = [Signer::from(&seeds)];
-
-    // 创建 escrow 账户（如果还未初始化）
-    if escrow.data_len() == 0 {
-        CreateAccount {
-            from: maker,
-            to: escrow,
-            lamports: 10_000_000, // 租金豁免金额
-            space: Escrow::LEN as u64,
-            owner: &ID,
-        }.invoke_signed(&signers)?;
-
-        // 填充 escrow 数据
-        unsafe {
-            let escrow_data = escrow.borrow_unchecked();
-            if escrow_data.len() >= Escrow::LEN {
-                // 需要可变借用来修改数据
-                let escrow_ptr = escrow_data.as_ptr() as *mut u8;
-                let escrow_slice = core::slice::from_raw_parts_mut(escrow_ptr, Escrow::LEN);
-                let escrow_account = Escrow::load_mut(escrow_slice)?;
-                escrow_account.set_inner(
-                    instruction_data.seed,
-                    maker.address().clone(),
-                    mint_a.address().clone(),
-                    mint_b.address().clone(),
-                    instruction_data.receive,
-                    [bump],
-                );
-            }
+impl<'a> MakeAccounts<'a> {
+    /// 从账户数组解析
+    pub fn try_from_accounts(accounts: &'a [AccountView]) -> Result<Self, ProgramError> {
+        if accounts.len() < 8 {
+            return Err(ProgramError::NotEnoughAccountKeys);
         }
+
+        let maker = &accounts[0];
+        let escrow = &accounts[1];
+        let mint_a = &accounts[2];
+        let mint_b = &accounts[3];
+        let maker_ata_a = &accounts[4];
+        let vault = &accounts[5];
+        let system_program = &accounts[6];
+        let token_program = &accounts[7];
+
+        // 基本账户检查
+        SignerAccount::check(maker)?;
+        MintInterface::check(mint_a)?;
+        MintInterface::check(mint_b)?;
+        AssociatedTokenAccount::check(maker_ata_a, maker, mint_a, token_program)?;
+
+        Ok(Self {
+            maker,
+            escrow,
+            mint_a,
+            mint_b,
+            maker_ata_a,
+            vault,
+            system_program,
+            token_program,
+        })
+    }
+}
+
+/// Make 指令结构
+pub struct Make<'a> {
+    pub accounts: MakeAccounts<'a>,
+    pub instruction_data: MakeInstructionData,
+    pub bump: u8,
+}
+
+impl<'a> Make<'a> {
+    /// 从数据和账户创建 Make 指令
+    pub fn try_from_parts(
+        data: &[u8],
+        accounts: &'a [AccountView],
+    ) -> Result<Self, ProgramError> {
+        let accounts = MakeAccounts::try_from_accounts(accounts)?;
+        let instruction_data = MakeInstructionData::try_from_bytes(data)?;
+
+        // 计算 PDA bump
+        let seed_bytes = instruction_data.seed.to_le_bytes();
+        let (_, bump) = Address::find_program_address(
+            &[b"escrow", accounts.maker.address().as_ref(), &seed_bytes],
+            &ID,
+        );
+
+        // 初始化 escrow 账户
+        let bump_binding = [bump];
+        let escrow_seeds = [
+            Seed::from(b"escrow"),
+            Seed::from(accounts.maker.address().as_ref()),
+            Seed::from(&seed_bytes),
+            Seed::from(&bump_binding),
+        ];
+
+        ProgramAccount::init::<Escrow>(
+            accounts.maker,
+            accounts.escrow,
+            &escrow_seeds,
+            Escrow::LEN,
+        )?;
+
+        // 初始化 vault (ATA)
+        AssociatedTokenAccount::init(
+            accounts.vault,
+            accounts.mint_a,
+            accounts.maker,
+            accounts.escrow,
+            accounts.system_program,
+            accounts.token_program,
+        )?;
+
+        Ok(Self {
+            accounts,
+            instruction_data,
+            bump,
+        })
     }
 
-    // 转移代币到 vault
-    // 注意：假设 vault ATA 已经在客户端创建
-    if vault.data_len() > 0 {
+    /// 处理指令
+    pub fn process(&mut self) -> ProgramResult {
+        // 填充 escrow 账户
+        let mut data = self.accounts.escrow.try_borrow_mut()?;
+        let escrow = Escrow::load_mut(&mut data)?;
+
+        escrow.set_inner(
+            self.instruction_data.seed,
+            self.accounts.maker.address().clone(),
+            self.accounts.mint_a.address().clone(),
+            self.accounts.mint_b.address().clone(),
+            self.instruction_data.receive,
+            [self.bump],
+        );
+
+        drop(data);
+
+        // 转移代币到 vault
         Transfer {
-            from: maker_ata_a,
-            to: vault,
-            authority: maker,
-            amount: instruction_data.amount,
+            from: self.accounts.maker_ata_a,
+            to: self.accounts.vault,
+            authority: self.accounts.maker,
+            amount: self.instruction_data.amount,
         }.invoke()?;
-    }
 
-    Ok(())
+        Ok(())
+    }
+}
+
+/// make 指令入口点
+pub fn make(data: &[u8], accounts: &[AccountView]) -> ProgramResult {
+    let mut make_ix = Make::try_from_parts(data, accounts)?;
+    make_ix.process()
 }
