@@ -190,10 +190,15 @@ impl<'a> TakeAccounts<'a> {
 
 ```rust
 // 在 take.rs 和 refund.rs 中
-// 1. 获取 escrow 的所有 lamports
+// 1. 获取 escrow 的所有 lamports（在清零数据之前）
 let escrow_lamports = self.accounts.escrow.lamports();
 
-// 2. 使用系统程序 CPI 转移 lamports 到 maker (使用 PDA 签名)
+// 2. 先清零数据（系统程序要求 from 账户不能有数据）
+let mut escrow_data = self.accounts.escrow.try_borrow_mut()?;
+escrow_data.fill(0);
+drop(escrow_data);
+
+// 3. 然后使用系统程序 CPI 转移 lamports 到 maker (使用 PDA 签名)
 if escrow_lamports > 0 {
     SystemTransfer {
         from: self.accounts.escrow,
@@ -201,22 +206,19 @@ if escrow_lamports > 0 {
         lamports: escrow_lamports,
     }.invoke_signed(&[signer])?;
 }
-
-// 3. 清零数据
-let mut escrow_data = self.accounts.escrow.try_borrow_mut()?;
-escrow_data.fill(0);
 ```
 
-**说明**：
+**关键要点**：
+- ⚠️ **顺序很重要**：必须先清零数据，再转移 lamports
+- ✅ 系统程序的 `Transfer` 指令要求：`from` 账户不能有数据
 - ✅ 使用 `pinocchio_system::instructions::Transfer` 转移 lamports
 - ✅ 使用 PDA 签名进行 CPI 调用
-- ✅ 清零账户数据
 - ✅ 测试平台验证：escrow 账户最终 lamports 为 0
 
-**为什么使用系统程序 CPI**：
-1. `AccountView::lamports()` 返回值，不能直接修改
-2. 系统程序 CPI 是 Pinocchio 中转移 lamports 的标准方法
-3. 需要使用 PDA 签名（`invoke_signed`）才能从 PDA 转出 lamports
+**为什么这个顺序**：
+1. 系统程序限制：不允许从有数据的账户转移 lamports
+2. 必须先清零数据，使账户变为"纯 SOL 账户"
+3. 然后才能使用系统程序 Transfer
 
 ## 📝 教程对比
 
