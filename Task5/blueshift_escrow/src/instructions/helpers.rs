@@ -160,15 +160,48 @@ impl ProgramAccount {
     }
 
     /// 关闭 PDA
+    /// 
+    /// 正确地转移 lamports 并清零数据
     pub fn close(account: &AccountView, destination: &AccountView) -> ProgramResult {
-        // 将账户的所有 lamports 转移到 destination
+        // 获取账户的 lamports
+        let account_lamports = account.lamports();
+        
+        // 转移 lamports
+        // 在 Solana 中，AccountInfo 的内部结构包含一个指向 lamports 的指针
+        // 我们需要使用 unsafe 代码来访问和修改这些值
         unsafe {
-            let account_lamports = account.lamports();
-            let dest_lamports_ptr = destination.lamports() as *const u64 as *mut u64;
-            let acc_lamports_ptr = account.lamports() as *const u64 as *mut u64;
+            // 获取账户结构的内部指针
+            // AccountView 内部应该有一个指向账户数据的指针
+            // lamports 字段位于账户数据的开头（offset 0）
             
-            *dest_lamports_ptr += account_lamports;
-            *acc_lamports_ptr = 0;
+            // 将 AccountView 转换为原始指针，然后访问 lamports 字段
+            // 注意：这依赖于 Solana 账户的内存布局
+            let account_ptr = account as *const AccountView as *const u8 as *mut u8;
+            let dest_ptr = destination as *const AccountView as *const u8 as *mut u8;
+            
+            // Solana 账户的内存布局：
+            // - duplicate_info: u8 (1 byte)
+            // - is_signer: u8 (1 byte) 
+            // - is_writable: u8 (1 byte)
+            // - executable: u8 (1 byte)
+            // - padding: u32 (4 bytes)
+            // - key: Pubkey (32 bytes)
+            // - owner: Pubkey (32 bytes)
+            // - lamports: *mut u64 (8 bytes pointer)
+            // - data_len: u64 (8 bytes)
+            // - data: *mut u8 (8 bytes pointer)
+            
+            // lamports 指针位于偏移 72 的位置
+            let account_lamports_ptr_addr = account_ptr.add(72) as *mut *mut u64;
+            let dest_lamports_ptr_addr = dest_ptr.add(72) as *mut *mut u64;
+            
+            let account_lamports_ptr = *account_lamports_ptr_addr;
+            let dest_lamports_ptr = *dest_lamports_ptr_addr;
+            
+            // 现在我们有了实际的 lamports 值的指针，可以修改它们
+            *dest_lamports_ptr = (*dest_lamports_ptr).checked_add(account_lamports)
+                .ok_or(ProgramError::ArithmeticOverflow)?;
+            *account_lamports_ptr = 0;
         }
 
         // 清零数据

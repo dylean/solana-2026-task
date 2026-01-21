@@ -145,11 +145,8 @@ impl<'a> Refund<'a> {
             authority: self.accounts.escrow,
         }.invoke_signed(&[signer.clone()])?;
 
-        // 3. 关闭 Escrow - 只清零数据，不转移 lamports
-        // 注意：对于测试平台，只需清零数据标记账户为已关闭
-        // lamports 的回收由测试平台运行时处理
-        let mut escrow_data = self.accounts.escrow.try_borrow_mut()?;
-        escrow_data.fill(0);
+        // 3. 关闭 Escrow（转移 lamports 到 maker 并清零数据）
+        ProgramAccount::close(self.accounts.escrow, self.accounts.maker)?;
 
         Ok(())
     }
