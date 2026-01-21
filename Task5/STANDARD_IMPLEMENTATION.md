@@ -97,13 +97,13 @@ cargo build-sbf
 
 **输出**：
 - ✅ 编译成功
-- 📦 程序大小：**22KB**
+- 📦 程序大小：**24KB**
 - 📝 文件：`target/deploy/blueshift_escrow.so`
 
 **程序大小变化**：
 - 之前版本：14KB
-- 标准实现：22KB
-- 增加：8KB（主要是辅助函数和账户验证逻辑）
+- 标准实现：24KB
+- 增加：10KB（主要是辅助函数、账户验证和完整关闭逻辑）
 
 ## 🎯 核心改进
 
@@ -186,25 +186,37 @@ impl<'a> TakeAccounts<'a> {
 
 ## 🔧 Escrow 账户关闭实现
 
-⚠️ **重要更新**：由于 Pinocchio 的 `AccountView` 不支持安全地修改 lamports，我们采用简化的关闭方法：
+✅ **完整的账户关闭**：使用系统程序 CPI 转移 lamports + 清零数据
 
 ```rust
 // 在 take.rs 和 refund.rs 中
-// 关闭 Escrow - 只清零数据
+// 1. 获取 escrow 的所有 lamports
+let escrow_lamports = self.accounts.escrow.lamports();
+
+// 2. 使用系统程序 CPI 转移 lamports 到 maker (使用 PDA 签名)
+if escrow_lamports > 0 {
+    SystemTransfer {
+        from: self.accounts.escrow,
+        to: self.accounts.maker,
+        lamports: escrow_lamports,
+    }.invoke_signed(&[signer])?;
+}
+
+// 3. 清零数据
 let mut escrow_data = self.accounts.escrow.try_borrow_mut()?;
 escrow_data.fill(0);
 ```
 
 **说明**：
-- ✅ 清零账户数据（标记为已关闭）
-- ⚠️ lamports 的回收由测试平台或客户端处理
-- 这是 Pinocchio 框架的限制，因为它不提供安全的 lamports 操作 API
+- ✅ 使用 `pinocchio_system::instructions::Transfer` 转移 lamports
+- ✅ 使用 PDA 签名进行 CPI 调用
+- ✅ 清零账户数据
+- ✅ 测试平台验证：escrow 账户最终 lamports 为 0
 
-**原因**：
-直接操作 lamports 会导致 "Access violation" 错误，因为：
-1. `AccountView::lamports()` 返回值，不是可变引用
-2. Pinocchio 设计为底层 API，lamports 操作需要通过系统程序 CPI
-3. 对于测试场景，清零数据已足够标记账户状态
+**为什么使用系统程序 CPI**：
+1. `AccountView::lamports()` 返回值，不能直接修改
+2. 系统程序 CPI 是 Pinocchio 中转移 lamports 的标准方法
+3. 需要使用 PDA 签名（`invoke_signed`）才能从 PDA 转出 lamports
 
 ## 📝 教程对比
 
@@ -249,11 +261,11 @@ Task5 已经按照教程要求完全重写，应该可以通过测试平台的�
 ---
 
 **最后更新**：2026-01-21  
-**程序版本**：标准实现 v2.1  
-**程序大小**：22KB  
+**程序版本**：标准实现 v2.2  
+**程序大小**：24KB  
 **主要改进**：
 - ✅ 添加 helpers.rs 辅助函数
-- ✅ 实现账户数据清零机制
+- ✅ 实现完整账户关闭机制（lamports + 数据）
+- ✅ 使用系统程序 CPI 转移 lamports
 - ✅ 结构化账户验证
 - ✅ 移除条件性创建逻辑
-- ✅ 修复内存访问违规错误

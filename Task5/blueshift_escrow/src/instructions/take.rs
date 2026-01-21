@@ -17,6 +17,7 @@ use pinocchio::{
     ProgramResult,
 };
 use pinocchio_token::instructions::{Transfer, CloseAccount};
+use pinocchio_system::instructions::Transfer as SystemTransfer;
 use crate::{ID, state::Escrow};
 use super::helpers::{
     SignerAccount, MintInterface, AssociatedTokenAccount, ProgramAccount, TokenAccount,
@@ -174,9 +175,20 @@ impl<'a> Take<'a> {
             amount: receive_amount,
         }.invoke()?;
 
-        // 4. 关闭 Escrow - 使用简化方法，只清零数据
-        // 注意：Pinocchio 的 AccountView 不支持安全地转移 lamports
-        // 测试平台可能会在外部处理 lamports 的回收
+        // 4. 关闭 Escrow - 转移 lamports 并清零数据
+        // 获取 escrow 的所有 lamports
+        let escrow_lamports = self.accounts.escrow.lamports();
+        
+        // 使用系统程序 CPI 转移 lamports 到 maker (使用 PDA 签名)
+        if escrow_lamports > 0 {
+            SystemTransfer {
+                from: self.accounts.escrow,
+                to: self.accounts.maker,
+                lamports: escrow_lamports,
+            }.invoke_signed(&[signer])?;
+        }
+        
+        // 清零数据
         let mut escrow_data = self.accounts.escrow.try_borrow_mut()?;
         escrow_data.fill(0);
 
