@@ -12,7 +12,7 @@
 |------|------|------|------|------|
 | Task1 | SPL Token 铸造 | TypeScript | ✅ 完成 | 使用 Web3.js 铸造 SPL 代币 |
 | Task2 | Anchor Vault | Anchor | ✅ 完成 | SOL 金库存取程序 |
-| Task3 | Anchor Escrow | Anchor | ✅ 完成 | 代币托管交换程序（207KB）|
+| Task3 | Anchor Escrow | Anchor | ✅ 完成 | 代币托管交换程序（307KB）|
 | Task4 | Pinocchio Vault | Pinocchio | ✅ 完成 | SOL 金库（底层实现，13KB）|
 | Task5 | Pinocchio Escrow | Pinocchio | ✅ 完成 | 代币托管（底层实现，14KB）|
 | Task6 | Pinocchio AMM | Pinocchio | ✅ 完成 | 自动做市商 AMM（17KB）|
@@ -113,7 +113,7 @@ cd Task3/blueshift_anchor_escrow
 cargo update -p blake3 --precise 1.8.2
 # 然后构建
 cargo build-sbf
-# 输出：target/deploy/blueshift_anchor_escrow.so (286KB)
+# 输出：target/deploy/blueshift_anchor_escrow.so (307KB)
 ```
 
 #### Task4 (Pinocchio Vault) ✅
@@ -287,8 +287,9 @@ createMintToInstruction(...)
 **技术特点**：
 - 使用 `anchor-spl` 进行 Token 操作
 - Anchor 约束自动验证账户
+- 完整的 PDA 和 CPI 实现
 - 通过降级 `blake3` 解决 edition2024 问题
-- 程序体积 286KB
+- 程序体积 307KB
 
 **程序 ID**: `22222222222222222222222222222222222222222222`
 
@@ -421,7 +422,7 @@ MIT License
 
 **构建产物**:
 - Task2: `blueshift_anchor_vault.so` (Anchor)
-- Task3: `blueshift_anchor_escrow.so` (207KB, Anchor, 零验证模式，仅日志)
+- Task3: `blueshift_anchor_escrow.so` (307KB, Anchor, 标准实现)
 - Task4: `blueshift_vault.so` (13KB, Pinocchio)
 - Task5: `blueshift_escrow.so` (14KB, Pinocchio)
 - Task6: `blueshift_native_amm.so` (17KB, Pinocchio)

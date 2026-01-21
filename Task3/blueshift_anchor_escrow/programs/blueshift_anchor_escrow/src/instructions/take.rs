@@ -2,16 +2,21 @@
  * take.rs - 接受托管指令
  * 
  * 功能：
- * 1. 验证接受者提供正确的代币 B
- * 2. 将接受者的代币 B 转给创建者
- * 3. 将金库中的代币 A 转给接受者
- * 4. 关闭金库和托管账户
+ * 1. 关闭托管记录，将其租金 lamports 返还给创建者
+ * 2. 将 Token A 从保管库转移到接受者，然后关闭保管库
+ * 3. 将约定数量的 Token B 从接受者转移到创建者
  * 
  * Discriminator: 1
  */
 
 use anchor_lang::prelude::*;
-use anchor_spl::token::{self, Token, TokenAccount, Transfer, CloseAccount};
+use anchor_spl::{
+    associated_token::AssociatedToken,
+    token_interface::{
+        close_account, transfer_checked, CloseAccount, Mint, TokenAccount, TokenInterface,
+        TransferChecked,
+    },
+};
 
 use crate::errors::EscrowError;
 use crate::state::Escrow;
@@ -19,121 +24,140 @@ use crate::state::Escrow;
 /**
  * Take 账户上下文
  * 
- * 定义接受托管所需的所有账户
+ * 严格按照教程定义的账户和约束
  */
 #[derive(Accounts)]
 pub struct Take<'info> {
-    /**
-     * taker - 接受者账户
-     * 
-     * 约束：
-     * - mut：需要签署并支付费用
-     * - Signer：必须签署交易
-     */
     #[account(mut)]
     pub taker: Signer<'info>,
 
-    /**
-     * maker - 创建者账户
-     * 
-     * 约束：
-     * - mut：接收代币 B
-     */
     #[account(mut)]
     pub maker: SystemAccount<'info>,
 
-    /**
-     * escrow - 托管账户（PDA）
-     * 
-     * 约束：
-     * - mut：需要关闭
-     */
-    #[account(mut)]
-    /// CHECK: Escrow account, provided by test platform
-    pub escrow: AccountInfo<'info>,
+    #[account(
+        mut,
+        close = maker,
+        seeds = [b"escrow", maker.key().as_ref(), escrow.seed.to_le_bytes().as_ref()],
+        bump = escrow.bump,
+        has_one = maker @ EscrowError::InvalidMaker,
+        has_one = mint_a @ EscrowError::InvalidMintA,
+        has_one = mint_b @ EscrowError::InvalidMintB,
+    )]
+    pub escrow: Box<Account<'info, Escrow>>,
 
-    /**
-     * taker_ata_a - 接受者的代币 A 账户
-     * 
-     * 约束：
-     * - mut：接收代币 A
-     */
-    #[account(mut)]
-    /// CHECK: Taker's token account for mint A
-    pub taker_ata_a: AccountInfo<'info>,
+    /// Token Accounts
+    pub mint_a: Box<InterfaceAccount<'info, Mint>>,
+    pub mint_b: Box<InterfaceAccount<'info, Mint>>,
 
-    /**
-     * taker_ata_b - 接受者的代币 B 账户
-     * 
-     * 约束：
-     * - mut：转出代币 B
-     */
-    #[account(mut)]
-    /// CHECK: Taker's token account for mint B
-    pub taker_ata_b: AccountInfo<'info>,
+    #[account(
+        mut,
+        associated_token::mint = mint_a,
+        associated_token::authority = escrow,
+        associated_token::token_program = token_program
+    )]
+    pub vault: Box<InterfaceAccount<'info, TokenAccount>>,
 
-    /**
-     * maker_ata_b - 创建者的代币 B 账户
-     * 
-     * 约束：
-     * - mut：接收代币 B
-     */
-    #[account(mut)]
-    /// CHECK: Maker's token account for mint B
-    pub maker_ata_b: AccountInfo<'info>,
+    #[account(
+        init_if_needed,
+        payer = taker,
+        associated_token::mint = mint_a,
+        associated_token::authority = taker,
+        associated_token::token_program = token_program
+    )]
+    pub taker_ata_a: Box<InterfaceAccount<'info, TokenAccount>>,
 
-    /**
-     * vault - 金库代币账户
-     * 
-     * 约束：
-     * - mut：转出代币并关闭
-     */
-    #[account(mut)]
-    /// CHECK: Vault token account, provided by test platform
-    pub vault: AccountInfo<'info>,
+    #[account(
+        mut,
+        associated_token::mint = mint_b,
+        associated_token::authority = taker,
+        associated_token::token_program = token_program
+    )]
+    pub taker_ata_b: Box<InterfaceAccount<'info, TokenAccount>>,
 
-    /**
-     * token_program - SPL Token 程序
-     */
-    /// CHECK: Token program account
-    pub token_program: AccountInfo<'info>,
+    #[account(
+        init_if_needed,
+        payer = taker,
+        associated_token::mint = mint_b,
+        associated_token::authority = maker,
+        associated_token::token_program = token_program
+    )]
+    pub maker_ata_b: Box<InterfaceAccount<'info, TokenAccount>>,
+
+    /// Programs
+    pub associated_token_program: Program<'info, AssociatedToken>,
+    pub token_program: Interface<'info, TokenInterface>,
+    pub system_program: Program<'info, System>,
+}
+
+impl<'info> Take<'info> {
+    /// 转移代币 B 给 Maker
+    fn transfer_to_maker(&mut self) -> Result<()> {
+        transfer_checked(
+            CpiContext::new(
+                self.token_program.to_account_info(),
+                TransferChecked {
+                    from: self.taker_ata_b.to_account_info(),
+                    to: self.maker_ata_b.to_account_info(),
+                    mint: self.mint_b.to_account_info(),
+                    authority: self.taker.to_account_info(),
+                },
+            ),
+            self.escrow.receive,
+            self.mint_b.decimals,
+        )?;
+        Ok(())
+    }
+
+    /// 从 Vault 取出代币 A 并关闭 Vault
+    fn withdraw_and_close_vault(&mut self) -> Result<()> {
+        // 创建 signer seeds
+        let signer_seeds: [&[&[u8]]; 1] = [&[
+            b"escrow",
+            self.maker.to_account_info().key.as_ref(),
+            &self.escrow.seed.to_le_bytes()[..],
+            &[self.escrow.bump],
+        ]];
+
+        // 转移代币 A (Vault -> Taker)
+        transfer_checked(
+            CpiContext::new_with_signer(
+                self.token_program.to_account_info(),
+                TransferChecked {
+                    from: self.vault.to_account_info(),
+                    to: self.taker_ata_a.to_account_info(),
+                    mint: self.mint_a.to_account_info(),
+                    authority: self.escrow.to_account_info(),
+                },
+                &signer_seeds,
+            ),
+            self.vault.amount,
+            self.mint_a.decimals,
+        )?;
+
+        // 关闭 Vault
+        close_account(CpiContext::new_with_signer(
+            self.token_program.to_account_info(),
+            CloseAccount {
+                account: self.vault.to_account_info(),
+                authority: self.escrow.to_account_info(),
+                destination: self.maker.to_account_info(),
+            },
+            &signer_seeds,
+        ))?;
+
+        Ok(())
+    }
 }
 
 /**
  * take 指令的处理函数
- * 
- * 步骤：
- * 1. 转移代币 B：taker -> maker
- * 2. 转移代币 A：vault -> taker（使用 PDA 签名）
- * 3. 关闭 vault（使用 PDA 签名）
- * 4. 关闭 escrow（通过约束自动处理）
  */
 pub fn handler(ctx: Context<Take>) -> Result<()> {
-    // 读取 escrow 数据
-    let escrow_data = ctx.accounts.escrow.try_borrow_data()?;
-    
-    // 读取 receive 金额 (offset 112, 8 bytes)
-    let receive = u64::from_le_bytes(escrow_data[112..120].try_into().unwrap());
-    
-    drop(escrow_data);
+    // 转移代币 B 给 Maker
+    ctx.accounts.transfer_to_maker()?;
 
-    // 1. 转移代币 B 从 taker 到 maker
-    // 注意：这里不使用 Anchor CPI，因为需要灵活性
-    let cpi_accounts = Transfer {
-        from: ctx.accounts.taker_ata_b.to_account_info(),
-        to: ctx.accounts.maker_ata_b.to_account_info(),
-        authority: ctx.accounts.taker.to_account_info(),
-    };
-    let cpi_ctx = CpiContext::new(
-        ctx.accounts.token_program.to_account_info(),
-        cpi_accounts,
-    );
-    token::transfer(cpi_ctx, receive)?;
-
-    // 2. 转移代币 A 从 vault 到 taker
-    // 注意：假设测试平台会处理 vault 的权限，或 vault 的 delegate 是 taker
-    // 由于我们无法使用 PDA 签名（没有 seeds 验证），这里简化处理
-    msg!("托管交易完成！Taker 收到代币 B，等待 vault 转账");
+    // 从 Vault 取出代币 A 并关闭 Vault
+    ctx.accounts.withdraw_and_close_vault()?;
 
     Ok(())
 }
