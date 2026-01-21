@@ -14,7 +14,7 @@
 | Task2 | Anchor Vault | Anchor | ✅ 完成 | SOL 金库存取程序 |
 | Task3 | Anchor Escrow | Anchor | ✅ 完成 | 代币托管交换程序（307KB）|
 | Task4 | Pinocchio Vault | Pinocchio | ✅ 完成 | SOL 金库（底层实现，13KB）|
-| Task5 | Pinocchio Escrow | Pinocchio | ✅ 完成 | 代币托管（底层实现，23KB）|
+| Task5 | Pinocchio Escrow | Pinocchio | ✅ 完成 | 代币托管（底层实现，22KB）|
 | Task6 | Pinocchio AMM | Pinocchio | ✅ 完成 | 自动做市商 AMM（17KB）|
 
 ## 📁 项目结构
@@ -127,7 +127,7 @@ cargo build-sbf
 ```bash
 cd Task5/blueshift_escrow
 cargo build-sbf
-# 输出：target/deploy/blueshift_escrow.so (23KB)
+# 输出：target/deploy/blueshift_escrow.so (22KB)
 ```
 
 #### Task6 (Pinocchio AMM) ✅
@@ -327,9 +327,9 @@ createMintToInstruction(...)
 - 底层 Token 程序 CPI
 - 完整的账户验证和安全检查
 - Escrow 状态序列化/反序列化
-- PDA 账户关闭机制
+- 账户数据清零机制
 - 性能优化
-- 小程序体积（23KB）
+- 极小程序体积（22KB）
 
 **程序 ID**: `22222222222222222222222222222222222222222222`
 
@@ -425,7 +425,7 @@ MIT License
 - Task2: `blueshift_anchor_vault.so` (Anchor)
 - Task3: `blueshift_anchor_escrow.so` (307KB, Anchor, 标准实现)
 - Task4: `blueshift_vault.so` (13KB, Pinocchio)
-- Task5: `blueshift_escrow.so` (23KB, Pinocchio, 标准实现)
+- Task5: `blueshift_escrow.so` (22KB, Pinocchio, 标准实现)
 - Task6: `blueshift_native_amm.so` (17KB, Pinocchio)
 
 **技术亮点**:
